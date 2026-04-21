@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智慧點名系統 · RollCall Pro</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Noto+Sans+TC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep: #030712;
+    --bg-card: rgba(15, 23, 42, 0.85);
+    --bg-glass: rgba(30, 41, 59, 0.6);
+    --border: rgba(99, 179, 237, 0.18);
+    --border-bright: rgba(99, 179, 237, 0.45);
+    --cyan: #22d3ee;
+    --cyan-dim: rgba(34, 211, 238, 0.15);
+    --cyan-glow: 0 0 20px rgba(34, 211, 238, 0.35);
+    --green: #4ade80;
+    --green-dim: rgba(74, 222, 128, 0.12);
+    --red: #f87171;
+    --red-dim: rgba(248, 113, 113, 0.12);
+    --yellow: #fbbf24;
+    --yellow-dim: rgba(251, 191, 36, 0.12);
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #475569;
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Noto Sans TC', sans-serif;
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 10%, rgba(34, 211, 238, 0.07) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(99, 102, 241, 0.06) 0%, transparent 60%),
+      radial-gradient(ellipse 40% 60% at 50% 50%, rgba(16, 185, 129, 0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Grid lines background */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(99, 179, 237, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99, 179, 237, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { position: relative; z-index: 1; max-width: 1600px; margin: 0 auto; padding: 24px; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 28px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(20px);
+    margin-bottom: 24px;
+    box-shadow: var(--cyan-glow), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .header-left { display: flex; align-items: center; gap: 16px; }
+
+  .logo-icon {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, var(--cyan), #6366f1);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.4);
+    flex-shrink: 0;
+  }
+
+  .header-titles h1 {
+    font-family: 'Orbitron', monospace;
+    font-size: 22px;
+    font-weight: 900;
+    background: linear-gradient(90deg, var(--cyan), #818cf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 2px;
+  }
+
+  .header-titles .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1px;
+    margin-top: 2px;
+  }
+
+  .header-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+
+  .badge {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .badge-mqtt { border-color: var(--yellow); color: var(--yellow); background: var(--yellow-dim); }
+  .badge-mqtt.connected { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+  .badge-mqtt.error { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .dot.pulse { animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.3)} }
+
+  .sig {
+    font-size: 11px; color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.5px;
+  }
+  .sig span { color: var(--cyan); }
+
+  /* ── CONFIG BAR ── */
+  .config-bar {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    padding: 16px 20px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(12px);
+    margin-bottom: 24px;
+    align-items: flex-end;
+  }
+
+  .config-group { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 200px; }
+  .config-group label { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 1px; text-transform: uppercase; }
+
+  input[type="text"], input[type="url"] {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 14px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    width: 100%;
+    transition: border-color .2s, box-shadow .2s;
+    outline: none;
+  }
+  input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(34,211,238,0.1); }
+
+  /* ── BUTTONS ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-family: 'Noto Sans TC', sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all .2s;
+    white-space: nowrap;
+  }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  .btn-primary { background: linear-gradient(135deg, rgba(34,211,238,0.2), rgba(99,102,241,0.2)); border-color: var(--cyan); color: var(--cyan); }
+  .btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, rgba(34,211,238,0.35), rgba(99,102,241,0.35)); box-shadow: var(--cyan-glow); }
+
+  .btn-success { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .btn-success:hover:not(:disabled) { background: rgba(74,222,128,0.22); box-shadow: 0 0 16px rgba(74,222,128,0.25); }
+
+  .btn-danger { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+  .btn-danger:hover:not(:disabled) { background: rgba(248,113,113,0.22); }
+
+  .btn-ghost { background: transparent; border-color: var(--border); color: var(--text-secondary); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--border-bright); color: var(--text-primary); }
+
+  .btn-yellow { background: var(--yellow-dim); border-color: var(--yellow); color: var(--yellow); }
+  .btn-yellow:hover:not(:disabled) { background: rgba(251,191,36,0.22); }
+
+  /* ── STATS ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    backdrop-filter: blur(16px);
+    position: relative;
+    overflow: hidden;
+    transition: transform .2s, box-shadow .2s;
+  }
+  .stat-card:hover { transform: translateY(-2px); }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+  }
+  .stat-card.total::before { background: linear-gradient(90deg, var(--cyan), #6366f1); }
+  .stat-card.present::before { background: linear-gradient(90deg, var(--green), #10b981); }
+  .stat-card.absent::before { background: linear-gradient(90deg, var(--red), #f43f5e); }
+  .stat-card.rate::before { background: linear-gradient(90deg, var(--yellow), #f97316); }
+
+  .stat-label { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 10px; }
+  .stat-value {
+    font-family: 'Orbitron', monospace;
+    font-size: 36px; font-weight: 700;
+    line-height: 1;
+  }
+  .stat-card.total .stat-value { color: var(--cyan); }
+  .stat-card.present .stat-value { color: var(--green); }
+  .stat-card.absent .stat-value { color: var(--red); }
+  .stat-card.rate .stat-value { color: var(--yellow); font-size: 30px; }
+
+  .progress-bar {
+    margin-top: 12px;
+    height: 4px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--green), var(--cyan));
+    transition: width .6s cubic-bezier(.4,0,.2,1);
+  }
+
+  /* ── MAIN LAYOUT ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+  }
+
+  @media (max-width: 1100px) { .main-grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(16px);
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.2);
+  }
+
+  .panel-title {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 14px; font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.5px;
+  }
+  .panel-title .icon { font-size: 16px; }
+
+  /* ── SEARCH ── */
+  .search-wrap { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .search-input-wrap { position: relative; }
+  .search-input-wrap svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+  .search-input-wrap input {
+    padding-left: 36px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid var(--border);
+  }
+  .search-input-wrap input:focus { border-color: var(--cyan); }
+
+  /* ── STUDENT TABLE ── */
+  .table-wrap { overflow-y: auto; max-height: 520px; }
+  .table-wrap::-webkit-scrollbar { width: 5px; }
+  .table-wrap::-webkit-scrollbar-track { background: transparent; }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 11px 16px;
+    text-align: left;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.25);
+    position: sticky; top: 0;
+    border-bottom: 1px solid var(--border);
+    z-index: 2;
+  }
+  tbody tr { border-bottom: 1px solid rgba(99,179,237,0.05); transition: background .15s; }
+  tbody tr:hover { background: rgba(34,211,238,0.04); }
+  tbody td { padding: 11px 16px; font-size: 13px; }
+
+  .td-rfid { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
+  .td-id { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-secondary); }
+  .td-name { font-weight: 500; }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 999px; font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .status-present { color: var(--green); border-color: rgba(74,222,128,0.4); background: var(--green-dim); }
+  .status-absent { color: var(--text-muted); border-color: var(--border); background: transparent; }
+
+  .td-time { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
+
+  .row-actions { display: flex; gap: 6px; }
+  .btn-xs {
+    padding: 5px 14px; font-size: 12px;
+    border-radius: 6px; cursor: pointer;
+    border: 1px solid; font-family: 'Noto Sans TC', sans-serif;
+    font-weight: 500;
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  .btn-xs-check { color: var(--green); border-color: rgba(74,222,128,0.4); background: var(--green-dim); }
+  .btn-xs-check:hover { background: rgba(74,222,128,0.25); }
+  .btn-xs-cancel { color: var(--red); border-color: rgba(248,113,113,0.4); background: var(--red-dim); }
+  .btn-xs-cancel:hover { background: rgba(248,113,113,0.25); }
+
+  /* ── ENTRY ANIMATION ── */
+  @keyframes rowFlash {
+    0% { background: rgba(74,222,128,0.25); }
+    100% { background: transparent; }
+  }
+  .row-flash { animation: rowFlash .8s ease-out; }
+
+  /* ── SIDE PANEL ── */
+  .side-col { display: flex; flex-direction: column; gap: 20px; }
+
+  /* Last scan card */
+  .scan-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(16px);
+    padding: 20px;
+    transition: border-color .3s;
+  }
+  .scan-card.success { border-color: rgba(74,222,128,0.5); box-shadow: 0 0 20px rgba(74,222,128,0.1); }
+  .scan-card.duplicate { border-color: rgba(251,191,36,0.5); box-shadow: 0 0 20px rgba(251,191,36,0.1); }
+  .scan-card.unknown { border-color: rgba(248,113,113,0.5); box-shadow: 0 0 20px rgba(248,113,113,0.1); }
+
+  .scan-title { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px; }
+
+  .scan-rfid {
+    font-family: 'Orbitron', monospace;
+    font-size: 20px; letter-spacing: 3px;
+    color: var(--cyan);
+    margin-bottom: 8px;
+    min-height: 28px;
+    word-break: break-all;
+  }
+
+  .scan-student { font-size: 18px; font-weight: 600; margin-bottom: 4px; min-height: 26px; }
+  .scan-student-id { font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-muted); min-height: 18px; }
+
+  .scan-status {
+    margin-top: 12px; padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 500;
+    text-align: center;
+    min-height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all .3s;
+  }
+  .scan-status.success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(74,222,128,0.3); }
+  .scan-status.duplicate { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(251,191,36,0.3); }
+  .scan-status.unknown { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,0.3); }
+  .scan-status.idle { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+
+  /* Controls */
+  .controls-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(16px);
+    padding: 20px;
+  }
+  .controls-title { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px; }
+  .controls-grid { display: flex; flex-direction: column; gap: 9px; }
+
+  .manual-row { display: flex; gap: 8px; }
+  .manual-row input { flex: 1; }
+
+  /* Log */
+  .log-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(16px);
+    overflow: hidden;
+  }
+  .log-body { padding: 0; overflow-y: auto; max-height: 280px; }
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+
+  .log-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+  .log-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 16px;
+    border-bottom: 1px solid rgba(99,179,237,0.04);
+    font-size: 12px;
+    animation: logIn .25s ease-out;
+  }
+  @keyframes logIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+
+  .log-time { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); font-size: 11px; flex-shrink: 0; margin-top: 1px; }
+  .log-icon { flex-shrink: 0; margin-top: 1px; }
+  .log-text { color: var(--text-secondary); line-height: 1.5; }
+  .log-text strong { color: var(--text-primary); }
+
+  /* Toast */
+  .toast-wrap { position: fixed; top: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+  .toast {
+    padding: 12px 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid;
+    font-size: 13px;
+    backdrop-filter: blur(16px);
+    display: flex; align-items: center; gap: 9px;
+    animation: toastIn .3s cubic-bezier(.4,0,.2,1);
+    max-width: 320px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+  .toast.success { background: rgba(16,24,40,0.95); border-color: rgba(74,222,128,0.4); color: var(--green); }
+  .toast.error { background: rgba(16,24,40,0.95); border-color: rgba(248,113,113,0.4); color: var(--red); }
+  .toast.warning { background: rgba(16,24,40,0.95); border-color: rgba(251,191,36,0.4); color: var(--yellow); }
+  .toast.info { background: rgba(16,24,40,0.95); border-color: rgba(34,211,238,0.4); color: var(--cyan); }
+
+  /* Voice button */
+  .voice-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: var(--radius-sm);
+    font-size: 12px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-secondary); transition: all .2s;
+    font-family: 'Noto Sans TC', sans-serif;
+  }
+  .voice-btn.on { border-color: rgba(34,211,238,0.5); color: var(--cyan); background: var(--cyan-dim); }
+  .voice-btn:hover { border-color: var(--border-bright); color: var(--text-primary); }
+
+  /* Divider */
+  .section-actions {
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  /* Loading overlay */
+  #loading {
+    position: fixed; inset: 0;
+    background: var(--bg-deep);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 9000;
+    gap: 20px;
+    transition: opacity .5s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  .loading-logo { font-family: 'Orbitron', monospace; font-size: 32px; font-weight: 900; background: linear-gradient(90deg, var(--cyan), #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .loading-bar { width: 200px; height: 2px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden; }
+  .loading-fill { height: 100%; background: linear-gradient(90deg, var(--cyan), #818cf8); border-radius: 999px; animation: loadBar 1.5s ease-in-out infinite; }
+  @keyframes loadBar { 0%{width:0%;margin-left:0} 50%{width:70%;margin-left:0} 100%{width:0%;margin-left:100%} }
+  .loading-text { font-size: 13px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="loading-logo">ROLLCALL PRO</div>
+  <div class="loading-bar"><div class="loading-fill"></div></div>
+  <div class="loading-text" id="loadingText">初始化系統中...</div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<div class="container">
+  <!-- HEADER -->
+  <header>
+    <div class="header-left">
+      <div class="logo-icon">📡</div>
+      <div class="header-titles">
+        <h1>ROLLCALL PRO</h1>
+        <div class="subtitle">智慧 RFID 點名系統 · MQTT LIVE</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="badge badge-mqtt" id="mqttBadge">
+        <div class="dot pulse" id="mqttDot"></div>
+        <span id="mqttStatus">連線中...</span>
+      </div>
+      <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">🔇 語音關閉</button>
+      <div class="sig">by <span>徐誌遠</span></div>
+    </div>
+  </header>
+
+  <!-- CONFIG BAR -->
+  <div class="config-bar">
+    <div class="config-group" style="min-width:160px;">
+      <label>MQTT Broker</label>
+      <input type="text" id="mqttHost" value="broker.emqx.io" readonly>
+    </div>
+    <div class="config-group" style="min-width:120px;">
+      <label>Topic</label>
+      <input type="text" id="mqttTopic" value="justRollCall">
+    </div>
+    <div class="config-group" style="min-width:160px;">
+      <label>CSV 檔案名稱</label>
+      <input type="text" id="csvFilename" value="121171076.csv">
+    </div>
+    <button class="btn btn-primary" onclick="loadCSV()">📋 載入名單</button>
+    <button class="btn btn-ghost" onclick="reconnectMQTT()">🔄 重連 MQTT</button>
+    <button class="btn btn-yellow" onclick="exportCSV()">⬇ 匯出 CSV</button>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-card total">
+      <div class="stat-label">總人數</div>
+      <div class="stat-value" id="statTotal">0</div>
+    </div>
+    <div class="stat-card present">
+      <div class="stat-label">出席人數</div>
+      <div class="stat-value" id="statPresent">0</div>
+    </div>
+    <div class="stat-card absent">
+      <div class="stat-label">缺席人數</div>
+      <div class="stat-value" id="statAbsent">0</div>
+    </div>
+    <div class="stat-card rate">
+      <div class="stat-label">出席率</div>
+      <div class="stat-value" id="statRate">0%</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="main-grid">
+    <!-- LEFT: Student Table -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="icon">👥</span> 學生名單
+          <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;" id="tableCount">(0 人)</span>
+        </div>
+        <div class="section-actions">
+          <input type="text" id="searchInput" placeholder="🔍 搜尋學號或姓名..." style="width:200px;padding:6px 12px;font-size:13px;" oninput="filterTable()">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>RFID Tag</th>
+              <th>學號</th>
+              <th>姓名</th>
+              <th>狀態</th>
+              <th>點名時間</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="studentTableBody">
+            <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">請載入學生名單</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RIGHT: Side column -->
+    <div class="side-col">
+      <!-- Last Scan -->
+      <div class="scan-card" id="scanCard">
+        <div class="scan-title">最新感應</div>
+        <div class="scan-rfid" id="scanRfid">—</div>
+        <div class="scan-student" id="scanName">待機中</div>
+        <div class="scan-student-id" id="scanId">—</div>
+        <div class="scan-status idle" id="scanStatus">等待 RFID 感應...</div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls-panel">
+        <div class="controls-title">快速操作</div>
+        <div class="controls-grid">
+          <button class="btn btn-ghost" style="width:100%" onclick="resetAll()">🔁 重置所有點名</button>
+        </div>
+        <div style="margin-top:12px;padding:10px 12px;background:rgba(34,211,238,0.05);border:1px solid rgba(34,211,238,0.1);border-radius:8px;font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;line-height:1.8;">
+          💡 手動點名請直接點擊<br>左側名單中的<span style="color:var(--green);">「手動點名」</span>按鈕<br>取消則點<span style="color:var(--red);">「取消點名」</span>按鈕
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="log-panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="icon">📋</span> 即時動態</div>
+          <button class="btn-xs btn-xs-cancel" onclick="clearLog()" style="font-size:11px;padding:3px 8px;">清除</button>
+        </div>
+        <div class="log-body" id="logBody">
+          <div class="log-empty">尚無活動紀錄</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  STATE
+// ============================================================
+let students = [];       // { rfid, studentId, name, present, checkTime }
+let mqttClient = null;
+let voiceEnabled = false;
+let audioCtx = null;
+
+// ============================================================
+//  INIT
+// ============================================================
+window.addEventListener('DOMContentLoaded', async () => {
+  setLoadingText('連線 MQTT Broker...');
+  initMQTT();
+  await delay(800);
+  setLoadingText('系統就緒');
+  await delay(500);
+  document.getElementById('loading').classList.add('hide');
+  addLog('system', '系統啟動完成，等待載入名單');
+});
+
+function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
+function setLoadingText(t){ document.getElementById('loadingText').textContent = t; }
+
+// ============================================================
+//  CSV LOADER
+// ============================================================
+async function loadCSV() {
+  const filename = document.getElementById('csvFilename').value.trim() || '121171076.csv';
+  addLog('system', '正在載入名單: ' + filename);
+  try {
+    const res = await fetch(filename);
+    if(!res.ok) throw new Error('HTTP ' + res.status + '，請確認檔案與 HTML 在同一資料夾');
+    const text = await res.text();
+    parseCSV(text);
+    showToast('success', `✅ 成功載入 ${students.length} 位學生`);
+    addLog('success', `名單載入成功：共 ${students.length} 位學生`);
+  } catch(e) {
+    showToast('error', '❌ 載入失敗：' + e.message);
+    addLog('error', '名單載入失敗：' + e.message);
+    console.error(e);
+  }
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
+  if(lines.length < 2){ showToast('error','CSV 格式錯誤或無資料'); return; }
+
+  // Auto-detect header
+  const header = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase());
+  let rfidCol = -1, idCol = -1, nameCol = -1;
+
+  header.forEach((h, i) => {
+    if(h.includes('rfid') || h.includes('tag') || h.includes('標籤')) rfidCol = i;
+    else if(h.includes('學號') || h.includes('id') || h.includes('student')) idCol = i;
+    else if(h.includes('姓名') || h.includes('name') || h.includes('學生')) nameCol = i;
+  });
+
+  // Fallback: assume order rfid, studentId, name
+  if(rfidCol < 0) rfidCol = 0;
+  if(idCol < 0) idCol = 1;
+  if(nameCol < 0) nameCol = 2;
+
+  students = [];
+  for(let i = 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+    if(cols.length < 2) continue;
+    const rfid = (cols[rfidCol] || '').trim();
+    const studentId = (cols[idCol] || '').trim();
+    const name = (cols[nameCol] || '').trim();
+    if(rfid || studentId) {
+      students.push({ rfid, studentId, name, present: false, checkTime: null });
+    }
+  }
+  renderTable();
+  updateStats();
+}
+
+function parseCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for(let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if(c === '"') { inQuotes = !inQuotes; }
+    else if(c === ',' && !inQuotes) { result.push(current); current = ''; }
+    else { current += c; }
+  }
+  result.push(current);
+  return result;
+}
+
+// ============================================================
+//  TABLE RENDER
+// ============================================================
+let filterText = '';
+
+function filterTable() {
+  filterText = document.getElementById('searchInput').value.toLowerCase();
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('studentTableBody');
+  const filtered = students.filter(s =>
+    !filterText ||
+    s.studentId.toLowerCase().includes(filterText) ||
+    s.name.toLowerCase().includes(filterText) ||
+    s.rfid.toLowerCase().includes(filterText)
+  );
+
+  document.getElementById('tableCount').textContent = `(${students.length} 人)`;
+
+  if(filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">${students.length === 0 ? '請載入學生名單' : '無符合搜尋條件的學生'}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(s => {
+    const key = (s.rfid || s.studentId).replace(/['"]/g, '');
+    const statusHtml = s.present
+      ? `<span class="status-badge status-present"><span class="dot"></span>出席</span>`
+      : `<span class="status-badge status-absent">缺席</span>`;
+    const timeHtml = s.checkTime
+      ? `<span class="td-time">${s.checkTime}</span>`
+      : `<span style="color:var(--text-muted);font-size:11px;">—</span>`;
+    // 未出席：顯示綠色「手動點名」；已出席：顯示紅色「取消點名」
+    const actionHtml = s.present
+      ? `<button class="btn-xs btn-xs-cancel" onclick="cancelByKey('${key}')">✖ 取消點名</button>`
+      : `<button class="btn-xs btn-xs-check" onclick="manualByKey('${key}')">✔ 手動點名</button>`;
+    return `
+      <tr id="row-${key}">
+        <td class="td-rfid">${s.rfid || '—'}</td>
+        <td class="td-id">${s.studentId}</td>
+        <td class="td-name">${s.name}</td>
+        <td>${statusHtml}</td>
+        <td>${timeHtml}</td>
+        <td><div class="row-actions">${actionHtml}</div></td>
+      </tr>`;
+  }).join('');
+}
+
+// ============================================================
+//  CHECK IN LOGIC
+// ============================================================
+function processRfid(rfid) {
+  rfid = rfid.trim();
+  if(!rfid) return;
+
+  updateScanCard(rfid, null, null, 'idle');
+
+  const student = students.find(s => s.rfid === rfid) || students.find(s => s.studentId === rfid);
+  if(!student) {
+    // Unknown tag
+    updateScanCard(rfid, '未知標籤', rfid, 'unknown');
+    playSound('unknown');
+    speak('感應到未知標籤');
+    addLog('unknown', `未知 RFID 標籤：${rfid}`);
+    showToast('error', `⚠ 未知標籤：${rfid}`);
+    return;
+  }
+
+  if(student.present) {
+    // Duplicate
+    updateScanCard(rfid, student.name, student.studentId, 'duplicate');
+    playSound('duplicate');
+    speak(`${student.name}，已經點名過了`);
+    addLog('duplicate', `重複點名：${student.name}（${student.studentId}）`);
+    showToast('warning', `⚡ 重複點名：${student.name}`);
+    return;
+  }
+
+  // Success
+  student.present = true;
+  student.checkTime = nowTime();
+  updateScanCard(rfid, student.name, student.studentId, 'success');
+  playSound('success');
+  speak(`${student.name} 點名成功`);
+  addLog('success', `點名成功：${student.name}（${student.studentId}）`);
+  showToast('success', `✅ ${student.name} 點名成功`);
+  renderTable();
+  updateStats();
+
+  // Flash row
+  setTimeout(() => {
+    const row = document.getElementById(`row-${student.rfid || student.studentId}`);
+    if(row) row.classList.add('row-flash');
+  }, 50);
+}
+
+// 透過 rfid 或 studentId 找學生
+function findByKey(key) {
+  return students.find(s => s.rfid === key || s.studentId === key);
+}
+
+// 表格「手動點名」按鈕 — 直接標記出席
+function manualByKey(key) {
+  const student = findByKey(key);
+  if(!student) return;
+  if(student.present) { showToast('warning', `⚡ ${student.name} 已經點名過了`); return; }
+  student.present = true;
+  student.checkTime = nowTime();
+  updateScanCard(student.rfid || student.studentId, student.name, student.studentId, 'success');
+  playSound('success');
+  speak(`${student.name} 點名成功`);
+  addLog('success', `手動點名：${student.name}（${student.studentId}）`);
+  showToast('success', `✅ ${student.name} 手動點名成功`);
+  renderTable();
+  updateStats();
+  setTimeout(() => {
+    const rowKey = (student.rfid || student.studentId).replace(/['"]/g,'');
+    const row = document.getElementById(`row-${rowKey}`);
+    if(row) { row.classList.add('row-flash'); setTimeout(() => row.classList.remove('row-flash'), 900); }
+  }, 50);
+}
+
+// 表格「取消點名」按鈕
+function cancelByKey(key) {
+  const student = findByKey(key);
+  if(!student || !student.present) return;
+  student.present = false;
+  student.checkTime = null;
+  addLog('cancel', `取消點名：${student.name}（${student.studentId}）`);
+  showToast('warning', `↩ 已取消：${student.name}`);
+  renderTable();
+  updateStats();
+}
+
+function resetAll() {
+  if(!confirm('確定要重置所有點名紀錄？')) return;
+  students.forEach(s => { s.present = false; s.checkTime = null; });
+  renderTable();
+  updateStats();
+  addLog('system', '所有點名紀錄已重置');
+  showToast('info', '🔁 所有點名紀錄已重置');
+  updateScanCard('—', '待機中', '—', 'idle');
+}
+
+// ============================================================
+//  SCAN CARD UI
+// ============================================================
+function updateScanCard(rfid, name, id, type) {
+  const card = document.getElementById('scanCard');
+  card.className = 'scan-card ' + (type !== 'idle' ? type : '');
+  document.getElementById('scanRfid').textContent = rfid || '—';
+  document.getElementById('scanName').textContent = name || '待機中';
+  document.getElementById('scanId').textContent = id || '—';
+
+  const statusEl = document.getElementById('scanStatus');
+  statusEl.className = 'scan-status ' + type;
+  const msgs = {
+    success: '✅ 點名成功',
+    duplicate: '⚡ 重複點名',
+    unknown: '⚠ 未知標籤',
+    idle: '等待 RFID 感應...'
+  };
+  statusEl.textContent = msgs[type] || '—';
+}
+
+// ============================================================
+//  STATS
+// ============================================================
+function updateStats() {
+  const total = students.length;
+  const present = students.filter(s => s.present).length;
+  const absent = total - present;
+  const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statPresent').textContent = present;
+  document.getElementById('statAbsent').textContent = absent;
+  document.getElementById('statRate').textContent = rate + '%';
+  document.getElementById('progressFill').style.width = rate + '%';
+}
+
+// ============================================================
+//  MQTT
+// ============================================================
+function initMQTT() {
+  const topic = document.getElementById('mqttTopic').value || 'justRollCall';
+  const clientId = 'rollcall_' + Math.random().toString(36).substr(2, 8);
+
+  if(mqttClient) { try{ mqttClient.end(true); }catch(e){} }
+
+  setBadge('connecting');
+
+  try {
+    mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+      clientId,
+      clean: true,
+      reconnectPeriod: 5000,
+      connectTimeout: 10000
+    });
+
+    mqttClient.on('connect', () => {
+      setBadge('connected');
+      mqttClient.subscribe(topic, { qos: 0 }, (err) => {
+        if(err) { addLog('error', 'MQTT 訂閱失敗：' + err.message); }
+        else {
+          addLog('success', `MQTT 已連線，訂閱 Topic: ${topic}`);
+          showToast('success', `📡 MQTT 已連線 → ${topic}`);
+        }
+      });
+    });
+
+    mqttClient.on('message', (t, payload) => {
+      const msg = payload.toString().trim();
+      addLog('mqtt', `MQTT 收到 [${t}]: ${msg}`);
+      processRfid(msg);
+    });
+
+    mqttClient.on('error', (err) => {
+      setBadge('error');
+      addLog('error', 'MQTT 錯誤：' + err.message);
+    });
+
+    mqttClient.on('close', () => {
+      setBadge('disconnected');
+    });
+
+    mqttClient.on('reconnect', () => {
+      setBadge('connecting');
+    });
+
+  } catch(e) {
+    setBadge('error');
+    addLog('error', 'MQTT 初始化失敗：' + e.message);
+  }
+}
+
+function reconnectMQTT() { initMQTT(); }
+
+function setBadge(state) {
+  const badge = document.getElementById('mqttBadge');
+  const dot = document.getElementById('mqttDot');
+  const status = document.getElementById('mqttStatus');
+  badge.className = 'badge badge-mqtt';
+  dot.className = 'dot';
+  const stateMap = {
+    connecting: ['', 'pulse', '連線中...'],
+    connected:  ['connected', 'pulse', '已連線'],
+    disconnected: ['', '', '已斷線'],
+    error: ['error', '', '連線錯誤']
+  };
+  const [cls, dotCls, text] = stateMap[state] || stateMap.disconnected;
+  if(cls) badge.classList.add(cls);
+  if(dotCls) dot.classList.add(dotCls);
+  status.textContent = text;
+}
+
+// ============================================================
+//  AUDIO (Web Audio API)
+// ============================================================
+function getAudioCtx() {
+  if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playSound(type) {
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if(type === 'success') {
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc.start(); osc.stop(ctx.currentTime + 0.4);
+    } else if(type === 'duplicate') {
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.setValueAtTime(330, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.start(); osc.stop(ctx.currentTime + 0.35);
+    } else if(type === 'unknown') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200, ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      osc.start(); osc.stop(ctx.currentTime + 0.5);
+    }
+  } catch(e) { console.warn('Audio error:', e); }
+}
+
+// ============================================================
+//  TTS
+// ============================================================
+function toggleVoice() {
+  voiceEnabled = !voiceEnabled;
+  const btn = document.getElementById('voiceBtn');
+  btn.textContent = voiceEnabled ? '🔊 語音開啟' : '🔇 語音關閉';
+  btn.className = voiceEnabled ? 'voice-btn on' : 'voice-btn';
+  showToast('info', voiceEnabled ? '🔊 語音朗讀已開啟' : '🔇 語音朗讀已關閉');
+}
+
+function speak(text) {
+  if(!voiceEnabled) return;
+  if(!('speechSynthesis' in window)) return;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'zh-TW';
+  utter.rate = 1.0;
+  utter.pitch = 1.0;
+  utter.volume = 0.9;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utter);
+}
+
+// ============================================================
+//  LOG
+// ============================================================
+const logIcons = {
+  success: '✅',
+  error: '❌',
+  warning: '⚠️',
+  unknown: '❓',
+  duplicate: '⚡',
+  system: '⚙️',
+  mqtt: '📡',
+  cancel: '↩️',
+  info: 'ℹ️'
+};
+
+function addLog(type, message) {
+  const body = document.getElementById('logBody');
+  const empty = body.querySelector('.log-empty');
+  if(empty) empty.remove();
+
+  const item = document.createElement('div');
+  item.className = 'log-item';
+  item.innerHTML = `
+    <span class="log-time">${nowTime()}</span>
+    <span class="log-icon">${logIcons[type] || '•'}</span>
+    <span class="log-text">${escHtml(message)}</span>
+  `;
+  body.insertBefore(item, body.firstChild);
+
+  // Keep max 100 entries
+  while(body.children.length > 100) body.removeChild(body.lastChild);
+}
+
+function clearLog() {
+  document.getElementById('logBody').innerHTML = '<div class="log-empty">尚無活動紀錄</div>';
+}
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ============================================================
+//  EXPORT CSV
+// ============================================================
+function exportCSV() {
+  if(students.length === 0) { showToast('error', '請先載入名單'); return; }
+
+  const BOM = '\uFEFF';
+  const header = '學號,姓名,狀態,點名時間\n';
+  const rows = students.map(s =>
+    `"${s.studentId}","${s.name}","${s.present ? '出席' : '缺席'}","${s.checkTime || ''}"`
+  ).join('\n');
+  const csv = BOM + header + rows;
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `點名結果_${nowStamp()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  addLog('system', `匯出 CSV：${students.length} 筆資料`);
+  showToast('success', `⬇ 匯出成功：${students.length} 筆`);
+}
+
+// ============================================================
+//  TOAST
+// ============================================================
+function showToast(type, message, duration = 3000) {
+  const wrap = document.getElementById('toastWrap');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `<span>${message}</span>`;
+  wrap.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(20px)';
+    toast.style.transition = 'all .3s';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// ============================================================
+//  UTILS
+// ============================================================
+function nowTime() {
+  const d = new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function nowStamp() {
+  const d = new Date();
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+function pad(n){ return String(n).padStart(2,'0'); }
+
+// init
+
+</script>
+</body>
+</html>

@@ -649,11 +649,14 @@ let audioCtx = null;
 window.addEventListener('DOMContentLoaded', async () => {
   setLoadingText('連線 MQTT Broker...');
   initMQTT();
-  await delay(800);
+  await delay(600);
+  setLoadingText('載入學生名單...');
+  await loadCSV();
+  await delay(400);
   setLoadingText('系統就緒');
-  await delay(500);
+  await delay(400);
   document.getElementById('loading').classList.add('hide');
-  addLog('system', '系統啟動完成，等待載入名單');
+  addLog('system', '系統啟動完成');
 });
 
 function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
